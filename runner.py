@@ -5,15 +5,17 @@ from ui import cetak_peta_2d
 
 
 def main():
-    USER_DE_PATH = 50.0
-    JUMLAH_NODE = 6
-
-    builder = WorldBuilder(size=(10, 10), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH)
+    USER_DE_PATH = 50.0 #default val for path
+    JUMLAH_NODE = 25
+    MAP_INPUT = [(1,1),(1,2),(2,1),(4,4),(3,4)]
+    builder = WorldBuilder(size=(15,15), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH, inp=MAP_INPUT)
 
     my_world = World(
         x=builder.x,
         y=builder.y,
         node_positions=builder.node_positions,
+        pos_to_cluster=builder.pos_to_cluster,
+        cluster_members=builder.cluster_members,
         default_cost=builder.de_path,
         threshold=2,
         growth_rate=2.0,

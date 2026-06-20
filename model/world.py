@@ -1,9 +1,39 @@
 import random
 import heapq
 from typing import List, Tuple, Dict
+from collections import defaultdict
+from math import inf
+
+
+class DSU:
+    """Disjoint-set (union-find) for merging adjacent node ids into clusters."""
+    def __init__(self, n: int):
+        self.parent = list(range(n + 1))
+
+    def find(self, a: int) -> int:
+        while a != self.parent[a]:
+            self.parent[a] = self.parent[self.parent[a]]
+            a = self.parent[a]
+        return a
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[rb] = ra
 
 
 class WorldBuilder:
+    """Construct a base map and cluster adjacent nodes.
+
+    Produces:
+      - `x`, `y`: grid size
+      - `node_positions`: dict mapping node_id -> (x,y)
+      - `pos_to_node`: dict mapping (x,y) -> node_id
+      - `pos_to_cluster`: dict mapping (x,y) -> cluster_id
+      - `cluster_members`: dict mapping cluster_id -> set(node_id)
+      - `_map`: grid with negative cluster ids for node cells
+    """
+
     def __init__(self, size: tuple[int, int] = (10, 10), num_nodes: int = 10, random_nodes: bool = True, de_path: float = 10.0, inp: list[tuple[int, int]] = []):
         if de_path < 0:
             raise ValueError("Default path value cant be less than zero!")
@@ -16,34 +46,109 @@ class WorldBuilder:
             raise ValueError("Ukuran grid terlalu kecil untuk jumlah node tersebut.")
 
         self._map = [[self.de_path for _ in range(self.y)] for _ in range(self.x)]
+
+        # node_id -> (x,y)
         self.node_positions: Dict[int, Tuple[int, int]] = {}
+        # (x,y) -> node_id
+        self.pos_to_node: Dict[Tuple[int, int], int] = {}
 
         if random_nodes:
             self._randomize()
         else:
-            self._manual(inp)
+            self._assign(inp)
+
+        # after nodes placed, build clusters (union adjacent nodes)
+        self._build_clusters()
 
     def _randomize(self):
         all_positions = [(i, j) for i in range(self.x) for j in range(self.y)]
         holder = random.sample(all_positions, self.n)
+        self._assign(holder)
 
-        for index, (nx, ny) in enumerate(holder):
-            self._map[nx][ny] = -(index + 1)
-            self.node_positions[index + 1] = (nx, ny)
+    def _assign(self, inp: List[Tuple[int, int]]):
+        """Place nodes using first `self.n` coordinates from `inp`.
 
-    def _manual(self, inp):
-        for index, (nx, ny) in enumerate(inp[:self.n]):
+        Assign node ids starting at 1. `node_positions` maps node id -> single (x,y).
+        """
+        for node_id, (nx, ny) in enumerate(inp[: self.n], start=1):
             if 0 <= nx < self.x and 0 <= ny < self.y:
-                self._map[nx][ny] = -(index + 1)
-                self.node_positions[index + 1] = (nx, ny)
+                self._map[nx][ny] = -(node_id)
+                self.node_positions[node_id] = (nx, ny)
+                self.pos_to_node[(nx, ny)] = node_id
+
+    def _build_clusters(self):
+        """Use DSU to merge orthogonally adjacent nodes into clusters.
+
+        Produces `pos_to_cluster` and `cluster_members`. Cluster ids are the DSU root ids.
+        """
+        dsu = DSU(self.n)
+
+        # union neighboring nodes
+        for node_id, (x, y) in self.node_positions.items():
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nb = (x + dx, y + dy)
+                if nb in self.pos_to_node:
+                    dsu.union(node_id, self.pos_to_node[nb])
+
+        # group nodes by root
+        clusters: Dict[int, set] = defaultdict(set)
+        for node_id in range(1, self.n + 1):
+            if node_id in self.node_positions:
+                root = dsu.find(node_id)
+                clusters[root].add(node_id)
+
+        # normalize cluster ids to small sequential ids (optional)
+        self.cluster_members: Dict[int, set] = {}
+        self.pos_to_cluster: Dict[Tuple[int, int], int] = {}
+        cluster_id_map: Dict[int, int] = {}
+        next_cluster_id = 1
+
+        for root, members in clusters.items():
+            cid = next_cluster_id
+            next_cluster_id += 1
+            cluster_id_map[root] = cid
+            self.cluster_members[cid] = members
+            # mark positions on map with cluster id
+            for nid in members:
+                pos = self.node_positions[nid]
+                self.pos_to_cluster[pos] = cid
+                x, y = pos
+                self._map[x][y] = -cid
+
+    def __print__(self):
+        """Print the grid with nodes and default costs (clusters shown by id)."""
+        for i in range(self.x):
+            row = ""
+            for j in range(self.y):
+                if self._map[i][j] < 0:
+                    row += f" K{-self._map[i][j]} "
+                else:
+                    row += f" {self._map[i][j]:.1f} "
+            print(row)
 
 
 class World:
-    def __init__(self, x: int, y: int, node_positions: dict, default_cost: float, threshold: int = 1, growth_rate: float = 2.0, discount_factor: float = 0.2):
+    """Runtime world used by the GA and pathfinding.
+
+    Attributes kept compatible with existing code:
+      - `node_pos`: dict node_id -> (x,y) (single position)
+      - `node_set`: set of node positions for quick membership tests
+    Additional cluster structures:
+      - `pos_to_cluster`: (x,y) -> cluster_id
+      - `cluster_members`: cluster_id -> set(node_id)
+      - `connected_clusters`: set of cluster_ids already touched by roads
+    """
+
+    def __init__(self, x: int, y: int, node_positions: dict, default_cost: float, threshold: int = 1, growth_rate: float = 2.0, discount_factor: float = 0.2, pos_to_cluster: Dict[Tuple[int,int], int] = None, cluster_members: Dict[int, set] = None):
         self.x = x
         self.y = y
-        self.node_pos = node_positions
+        # node_positions is expected node_id -> (x,y)
+        self.node_pos: Dict[int, Tuple[int, int]] = node_positions
         self.node_set = set(node_positions.values())
+
+        # cluster structures may be provided by WorldBuilder as attributes; if not, initialize
+        self.pos_to_cluster: Dict[Tuple[int, int], int] = pos_to_cluster or {}
+        self.cluster_members: Dict[int, set] = cluster_members or {}
 
         self.default_cost = default_cost
         self.max_traf = threshold
@@ -51,14 +156,50 @@ class World:
         self.discount_factor = discount_factor
 
         self.road_layers = [[0 for _ in range(self.y)] for _ in range(self.x)]
+        self.connected_clusters: set = set()
+        self.connected_nodes: set = set()
+        # graph of clusters connected by roads: cluster_id -> set(cluster_id)
+        self.cluster_graph: Dict[int, set] = defaultdict(set)
 
     def reset_world(self):
         self.road_layers = [[0 for _ in range(self.y)] for _ in range(self.x)]
+        self.connected_clusters.clear()
+        self.connected_nodes.clear()
+        # reset cluster graph built from roads
+        self.cluster_graph = defaultdict(set)
 
     def add_road_path(self, path: List[Tuple[int, int]]):
+        """Increment road layers and mark clusters/nodes touched by the path."""
+        path_clusters = []
         for (px, py) in path:
             if 0 <= px < self.x and 0 <= py < self.y:
                 self.road_layers[px][py] += 1
+                pos = (px, py)
+                cid = self.pos_to_cluster.get(pos)
+                if cid is not None:
+                    # mark entire cluster as connected
+                    if cid not in self.connected_clusters:
+                        self.connected_clusters.add(cid)
+                        members = self.cluster_members.get(cid, set())
+                        for nid in members:
+                            self.connected_nodes.add(nid)
+                    # record cluster encountered along this path (in order)
+                    if not path_clusters or path_clusters[-1] != cid:
+                        path_clusters.append(cid)
+
+        # add edges between consecutive clusters encountered on this path
+        for i in range(len(path_clusters) - 1):
+            a = path_clusters[i]
+            b = path_clusters[i + 1]
+            self.cluster_graph[a].add(b)
+            self.cluster_graph[b].add(a)
+
+        # If the path directly connects two clusters (non-consecutive same cluster occurrences handled above), ensure edge
+        if len(path_clusters) >= 2:
+            self.cluster_graph[path_clusters[0]].add(path_clusters[-1])
+            self.cluster_graph[path_clusters[-1]].add(path_clusters[0])
+    def is_node_connected(self, node_id: int) -> bool:
+        return node_id in self.connected_nodes
 
     def get_cell_cost(self, x: int, y: int, target_pos: Tuple[int, int]) -> float:
         if not (0 <= x < self.x and 0 <= y < self.y):
@@ -81,6 +222,104 @@ class World:
             excess_layers = num_layers - self.max_traf
             return self.default_cost * (self.growth_rate ** excess_layers)
 
+    def network_is_fully_connected(self) -> bool:
+        """Return True if all clusters with members are connected together by roads.
+
+        Uses BFS on `cluster_graph`. If there is 0 or 1 cluster, treat as connected.
+        """
+        clusters = set(self.cluster_members.keys())
+        if len(clusters) <= 1:
+            return True
+
+        # pick a starting cluster that exists
+        start = next(iter(clusters))
+        seen = {start}
+        queue = [start]
+        while queue:
+            c = queue.pop(0)
+            for nb in self.cluster_graph.get(c, set()):
+                if nb not in seen:
+                    seen.add(nb)
+                    queue.append(nb)
+
+        return seen >= clusters
+
+    def get_cluster_components(self) -> List[set]:
+        """Return a list of connected components (sets of cluster_ids) in the cluster graph.
+
+        Uses BFS/graph flood-fill over `self.cluster_graph`. Clusters with no edges
+        appear as singletons. The order is arbitrary.
+        """
+        clusters = set(self.cluster_members.keys())
+        components: List[set] = []
+        visited = set()
+
+        for c in clusters:
+            if c in visited:
+                continue
+            comp = set()
+            queue = [c]
+            visited.add(c)
+            while queue:
+                cur = queue.pop(0)
+                comp.add(cur)
+                for nb in self.cluster_graph.get(cur, set()):
+                    if nb not in visited:
+                        visited.add(nb)
+                        queue.append(nb)
+            components.append(comp)
+
+        return components
+
+    def find_shortest_path_between_components(self, comp_a: set, comp_b: set) -> Tuple[List[Tuple[int,int]] | None, float]:
+        """Find the shortest A* path between any node in comp_a and any node in comp_b.
+
+        Returns a tuple (path, cost). If no path exists between any pair, returns (None, inf).
+        This does not modify world state (except A* reads current road layers).
+        """
+        best_path = None
+        best_cost = inf
+
+        for nid_a in comp_a:
+            start = self.node_pos.get(nid_a)
+            if start is None:
+                continue
+            for nid_b in comp_b:
+                target = self.node_pos.get(nid_b)
+                if target is None:
+                    continue
+                route = a_star_search(self, start, target)
+                if route:
+                    cost = sum(self.get_cell_cost(x, y, target) for x, y in route[1:])
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_path = route
+
+        return best_path, best_cost
+
+    def check_all_component_connectors(self) -> Dict[Tuple[int,int], Dict]:
+        """Check shortest connectors between every pair of components.
+
+        Returns a dict keyed by (i, j) where i<j are 1-based component indices
+        in the list returned by `get_cluster_components()`. Each value is a dict
+        with keys: 'clusters' (tuple of cluster ids), 'path' (list of coords or None), and 'cost' (float).
+        """
+        components = self.get_cluster_components()
+        results: Dict[Tuple[int,int], Dict] = {}
+
+        for i in range(len(components)):
+            for j in range(i+1, len(components)):
+                comp_i = components[i]
+                comp_j = components[j]
+                path, cost = self.find_shortest_path_between_components(comp_i, comp_j)
+                results[(i+1, j+1)] = {
+                    'clusters': (sorted(comp_i), sorted(comp_j)),
+                    'path': path,
+                    'cost': cost,
+                }
+
+        return results
+
 
 def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[int, int]):
     tx, ty = target_pos
@@ -92,7 +331,7 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
     best_g = {start_pos: 0.0}
 
     while open_set:
-        f_score, current_g, current, path = heapq.heappop(open_set)
+        _priority_, current_g, current, path = heapq.heappop(open_set)
 
         if current == target_pos:
             return path
@@ -111,5 +350,10 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
                 best_g[neighbor] = tentative_g
                 f_total = tentative_g + (abs(nx - tx) + abs(ny - ty))
                 heapq.heappush(open_set, (f_total, tentative_g, neighbor, path + [neighbor]))
-
+        
     return None
+
+
+if __name__ == "__main__":
+    builder = WorldBuilder(size=(10, 10), num_nodes=50, random_nodes=True, de_path=50.0)
+    builder.__print__()
