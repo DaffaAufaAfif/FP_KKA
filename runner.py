@@ -1,15 +1,62 @@
-import itertools
-from model import WorldBuilder, World
-from ga import run_genetic_algorithm, evaluate_chromosome
-from ui import cetak_peta_2d
+# import itertools
+# from model import WorldBuilder, World
+# from ga import run_genetic_algorithm, evaluate_chromosome
+# from ui import cetak_peta_2d
 
+
+# def main():
+#     USER_DE_PATH = 50.0 #default val for path
+#     JUMLAH_NODE = 25
+#     MAP_INPUT = [(1,1),(1,2),(2,1),(4,4),(3,4)]
+#     builder = WorldBuilder(size=(15,15), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH, inp=MAP_INPUT)
+
+#     my_world = World(
+#         x=builder.x,
+#         y=builder.y,
+#         node_positions=builder.node_positions,
+#         pos_to_cluster=builder.pos_to_cluster,
+#         cluster_members=builder.cluster_members,
+#         default_cost=builder.de_path,
+#         threshold=2,
+#         growth_rate=2.0,
+#         discount_factor=0.01,
+#     )
+
+#     print("Posisi Koordinat Kota yang Terbentuk:")
+#     for city_id, pos in my_world.node_pos.items():
+#         print(f"  Kota {city_id} -> {pos}")
+
+#     daftar_id_kota = list(my_world.node_pos.keys())
+#     daftar_rute = list(itertools.combinations(daftar_id_kota, 2))
+
+#     best_order, best_cost = run_genetic_algorithm(my_world, daftar_rute, pop_size=30, generations=20)
+
+#     evaluate_chromosome(best_order, my_world, daftar_rute)
+
+#     print("\n================ HASIL OPTIMASI GA ================")
+#     print(f"Urutan Indeks Pembuatan Rute Terbaik: {best_order}")
+#     print(f"Total Biaya Seluruh Jaringan Terpilih: {best_cost:.2f}")
+
+#     cetak_peta_2d(my_world)
+
+
+# if __name__ == "__main__":
+#     main()
+
+# runner.py
+import itertools
+from model.world import WorldBuilder, World
+from ui.app import SimulationUI  # Import UI buatanmu
 
 def main():
-    USER_DE_PATH = 50.0 #default val for path
+    USER_DE_PATH = 50.0 
     JUMLAH_NODE = 25
     MAP_INPUT = [(1,1),(1,2),(2,1),(4,4),(3,4)]
+    
+    # Generate peta dasar
     builder = WorldBuilder(size=(15,15), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH, inp=MAP_INPUT)
 
+    # Inisialisasi dunia simulasi runtime
     my_world = World(
         x=builder.x,
         y=builder.y,
@@ -22,23 +69,11 @@ def main():
         discount_factor=0.01,
     )
 
-    print("Posisi Koordinat Kota yang Terbentuk:")
-    for city_id, pos in my_world.node_pos.items():
-        print(f"  Kota {city_id} -> {pos}")
-
-    daftar_id_kota = list(my_world.node_pos.keys())
-    daftar_rute = list(itertools.combinations(daftar_id_kota, 2))
-
-    best_order, best_cost = run_genetic_algorithm(my_world, daftar_rute, pop_size=30, generations=20)
-
-    evaluate_chromosome(best_order, my_world, daftar_rute)
-
-    print("\n================ HASIL OPTIMASI GA ================")
-    print(f"Urutan Indeks Pembuatan Rute Terbaik: {best_order}")
-    print(f"Total Biaya Seluruh Jaringan Terpilih: {best_cost:.2f}")
-
-    cetak_peta_2d(my_world)
-
+    print("Membuka Simulator Rute Jalan (Pygame)...")
+    
+    # Panggil dan jalankan aplikasi UI Pygame milikmu
+    app = SimulationUI(my_world, builder, cell_size=40)
+    app.run()
 
 if __name__ == "__main__":
     main()
