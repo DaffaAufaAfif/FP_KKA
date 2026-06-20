@@ -1,7 +1,7 @@
 import itertools
-from FP_KKA.model import WorldBuilder, World
-from FP_KKA.ga import run_genetic_algorithm, evaluate_chromosome
-from FP_KKA.ui import cetak_peta_2d
+from model import WorldBuilder, World
+from ga import run_genetic_algorithm, evaluate_chromosome
+from ui import cetak_peta_2d
 
 
 def main():

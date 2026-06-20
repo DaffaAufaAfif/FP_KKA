@@ -2,8 +2,8 @@ import random
 import itertools
 from typing import List, Tuple
 
-from FP_KKA.model.world import a_star_search
-from FP_KKA.ga.operators import tournament_selection, order_crossover, swap_mutation
+from model.world import a_star_search
+from ga.operators import tournament_selection, order_crossover, swap_mutation
 
 
 def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int]]):
