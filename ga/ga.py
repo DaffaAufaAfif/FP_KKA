@@ -1,30 +1,18 @@
 import random
-import itertools
 from typing import List, Tuple
-
 from model.world import a_star_search
-from ga.operators import tournament_selection, order_crossover, swap_mutation
-
 
 def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int]]):
-    """Evaluate total cost for a chromosome by running A* for each pair.
+    """Evaluate total cost for a chromosome (routing order) by running A* for each pair.
     
-    Cluster-aware logic (refactored):
-    - Treat endpoints at cluster level: attempt cluster->cluster or cluster->node routes
-    - Only skip a pair when both nodes are already in the same connected component
-      (i.e., truly connected in `world.cluster_graph`). This avoids the
-      "illusion connectivity" bug.
-    - Early exit: as soon as the world's cluster graph becomes fully connected,
-      stop evaluating remaining pairs and return the current cost (performance).
+    This sequential routing is guided by pheromone levels on the world grid.
     """
     world.reset_world()
-    total_cost = 0.0
+    routed_info = []
+    extra_count = 0
+
     for pair_idx in chromosome:
         start_node, target_node = pairs[pair_idx]
-
-        # New skip rules to avoid encouraging star/topology:
-        # - skip only if pair is a self-loop
-        # - or if both nodes belong to the same initial cluster (cluster_members)
         start_c = world.cluster_of_node(start_node)
         target_c = world.cluster_of_node(target_node)
 
@@ -32,88 +20,132 @@ def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int
             continue
 
         if start_c is not None and target_c is not None and start_c == target_c:
-            # Nodes within the same initial cluster are considered connected by default
             continue
 
-        # Determine route: prefer cluster->cluster search when both endpoints have
-        # cluster ids (this tries member pairs and can find direct/alternative paths).
         route = None
-        route_cost = float('inf')
         if start_c is not None and target_c is not None and start_c != target_c:
-            route, route_cost = world.find_shortest_path_between_clusters(start_c, target_c)
+            route, _ = world.find_shortest_path_between_clusters(start_c, target_c)
         else:
-            # Fall back to node-to-node path
             start_pos = world.node_pos[start_node]
             target_pos = world.node_pos[target_node]
             route = a_star_search(world, start_pos, target_pos)
-            if route:
-                route_cost = sum(world.get_cell_cost(x, y, target_pos) for x, y in route[1:])
 
         if route:
-            total_cost += route_cost
             world.add_road_path(route)
-        else:
-            # large penalty for unreachable pair
-            total_cost += 100000.0
+            routed_info.append((target_node, route))
 
-        # Early exit: if network already fully connected, stop evaluating further pairs
+        # Early exit check: route 5 extra pairs for redundancy, then stop
         try:
             if world.network_is_fully_connected():
-                return total_cost
+                if extra_count >= 5:
+                    break
+                extra_count += 1
         except Exception:
             pass
 
-    # After processing all pairs, enforce full network connectivity.
-    # If clusters are not fully connected together (i.e. there is no spanning
-    # path between all clusters), apply a very large penalty so GA prefers
-    # solutions that create a single connected network.
-    # Enforce full connectivity: if not fully connected, mark chromosome as invalid
-    # by returning infinite cost so it cannot be selected.
+    # Enforce full connectivity
     try:
         if not world.network_is_fully_connected():
             return float('inf')
     except Exception:
-        # if world lacks network_is_fully_connected, keep current total_cost
         pass
+
+    # Calculate total cost based on physical road cost
+    total_cost = 0.0
+    for target_node, route in routed_info:
+        target_pos = world.node_pos[target_node]
+        route_cost = sum(world.get_cell_cost(x, y, target_pos) for x, y in route[1:])
+        total_cost += route_cost
+
+    # Cycle/Hamiltonian bonus
+    road_cells = set()
+    for x in range(world.x):
+        for y in range(world.y):
+            if world.road_layers[x][y] > 0:
+                road_cells.add((x, y))
+
+    if len(road_cells) > 0:
+        E_road = 0
+        for rx, ry in road_cells:
+            for dx, dy in ((1, 0), (0, 1)):
+                nx, ny = rx + dx, ry + dy
+                if (nx, ny) in road_cells:
+                    E_road += 1
+        V_road = len(road_cells)
+        num_cycles = E_road - V_road + 1
+        if num_cycles >= 1:
+            total_cost -= 1000.0
 
     return total_cost
 
 
 def run_genetic_algorithm(world, pairs, pop_size=20, generations=20, mutation_rate=0.15):
+    """Run Ant Colony Optimization (ACO) to find the optimal road layout.
+    
+    Keeps the function name and signature for compatibility with the UI.
+    """
     num_pairs = len(pairs)
     if num_pairs == 0:
         return None, 0.0
 
-    population = [random.sample(range(num_pairs), num_pairs) for _ in range(pop_size)]
+    # Initialize pheromone grid
+    world.pheromones = [[1.0 for _ in range(world.y)] for _ in range(world.x)]
+    
     best_overall_chromosome = None
     best_overall_cost = float('inf')
+    
+    # ACO Parameters
+    evaporation_rate = 0.1
+    Q = 5000.0  # Pheromone deposit factor
 
-    print(f"\n--- Memulai Algoritma Genetik ({generations} Generasi) ---")
+    print(f"\n--- Memulai Ant Colony Optimization ({generations} Iterasi) ---")
     print(f"Total Pasangan Rute: {num_pairs}")
     print(f"Jumlah Kluster: {len(world.cluster_members)}")
 
     for gen in range(generations):
-        cost_scores = [evaluate_chromosome(chrom, world, pairs) for chrom in population]
+        # Spawn colony of ants
+        ants_chromosomes = []
+        if best_overall_chromosome is not None:
+            # Elitism: keep best solution
+            ants_chromosomes.append(best_overall_chromosome.copy())
+            
+        while len(ants_chromosomes) < pop_size:
+            # Each ant explores a different routing order
+            chrom = random.sample(range(num_pairs), num_pairs)
+            ants_chromosomes.append(chrom)
 
+        # Evaluate each ant's solution
+        cost_scores = []
+        for chrom in ants_chromosomes:
+            cost = evaluate_chromosome(chrom, world, pairs)
+            cost_scores.append(cost)
+
+        # Find the best ant of this generation
+        best_gen_cost = float('inf')
+        best_gen_chrom = None
         for i, cost in enumerate(cost_scores):
-            if cost < best_overall_cost:
-                best_overall_cost = cost
-                best_overall_chromosome = population[i].copy()
+            if cost < best_gen_cost:
+                best_gen_cost = cost
+                best_gen_chrom = ants_chromosomes[i]
 
-        print(f"  Generasi {gen + 1:02d}: Total Biaya Jaringan Terbaik = {best_overall_cost:.2f}")
+        if best_gen_cost < best_overall_cost:
+            best_overall_cost = best_gen_cost
+            best_overall_chromosome = best_gen_chrom.copy()
 
-        new_population = []
-        min_idx = cost_scores.index(min(cost_scores))
-        new_population.append(population[min_idx].copy())
+        print(f"  Iterasi {gen + 1:02d}: Total Biaya Jaringan Terbaik = {best_overall_cost:.2f}")
 
-        while len(new_population) < pop_size:
-            p1 = tournament_selection(population, cost_scores)
-            p2 = tournament_selection(population, cost_scores)
+        # Evaporate pheromones
+        for x in range(world.x):
+            for y in range(world.y):
+                world.pheromones[x][y] = max(1.0, world.pheromones[x][y] * (1.0 - evaporation_rate))
 
-            child = order_crossover(p1, p2)
-            swap_mutation(child, mutation_rate)
-            new_population.append(child)
-
-        population = new_population
+        # Deposit pheromones for the best solution of this generation
+        if best_gen_chrom is not None and best_gen_cost != float('inf'):
+            # Rebuild roads of the best generation ant to see its paths
+            evaluate_chromosome(best_gen_chrom, world, pairs)
+            for x in range(world.x):
+                for y in range(world.y):
+                    if world.road_layers[x][y] > 0:
+                        world.pheromones[x][y] += Q / best_gen_cost
 
     return best_overall_chromosome, best_overall_cost

@@ -258,6 +258,50 @@ class World:
         if len(path_clusters) >= 2:
             self.cluster_graph[path_clusters[0]].add(path_clusters[-1])
             self.cluster_graph[path_clusters[-1]].add(path_clusters[0])
+
+    def remove_road_path(self, path: List[Tuple[int, int]]):
+        """Decrement road layers for the cells in the path."""
+        for (px, py) in path:
+            if not (0 <= px < self.x and 0 <= py < self.y):
+                continue
+            pos = (px, py)
+            if pos not in self.node_set:
+                if self.road_layers[px][py] > 0:
+                    self.road_layers[px][py] -= 1
+
+    def update_connectivity_from_path(self, path: List[Tuple[int, int]]):
+        """Mark clusters/nodes and build cluster graph from a path without changing road_layers."""
+        path_clusters = []
+        for (px, py) in path:
+            if not (0 <= px < self.x and 0 <= py < self.y):
+                continue
+
+            adjacent_clusters = []
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nb = (px + dx, py + dy)
+                cid = self.pos_to_cluster.get(nb)
+                if cid is not None:
+                    adjacent_clusters.append(cid)
+
+            for cid in adjacent_clusters:
+                if cid not in self.connected_clusters:
+                    self.connected_clusters.add(cid)
+                    members = self.cluster_members.get(cid, set())
+                    for nid in members:
+                        self.connected_nodes.add(nid)
+                if not path_clusters or path_clusters[-1] != cid:
+                    path_clusters.append(cid)
+
+        # add edges between consecutive clusters encountered on this path
+        for i in range(len(path_clusters) - 1):
+            a = path_clusters[i]
+            b = path_clusters[i + 1]
+            self.cluster_graph[a].add(b)
+            self.cluster_graph[b].add(a)
+
+        if len(path_clusters) >= 2:
+            self.cluster_graph[path_clusters[0]].add(path_clusters[-1])
+            self.cluster_graph[path_clusters[-1]].add(path_clusters[0])
     def is_node_connected(self, node_id: int) -> bool:
         return node_id in self.connected_nodes
 
@@ -562,16 +606,20 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
 
     for sp in start_positions:
         h = abs(sp[0] - tx) + abs(sp[1] - ty)
-        heapq.heappush(open_set, (h, 0.0, sp, [sp]))
-        best_g[sp] = 0.0
+        # Determine initial direction if starting from a node
+        last_dir = None
+        if start_pos in world.node_set:
+            last_dir = (sp[0] - start_pos[0], sp[1] - start_pos[1])
+        heapq.heappush(open_set, (h, 0.0, sp, [sp], last_dir))
+        best_g[(sp, last_dir)] = 0.0
 
     while open_set:
-        _priority_, current_g, current, path = heapq.heappop(open_set)
+        _priority_, current_g, current, path, last_dir = heapq.heappop(open_set)
 
         # 1. PINDAHKAN PENGECEKAN SUKSES KE BAWAH SETELAH VALIDASI COST!
         # Jangan langsung return di sini jika petak yang sedang diinjak ternyata ilegal/inf!
 
-        if current_g > best_g.get(current, float('inf')):
+        if current_g > best_g.get((current, last_dir), float('inf')):
             continue
 
         cx, cy = current
@@ -601,12 +649,22 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
                 if neighbor == target_pos:
                     return path + [neighbor]
 
-            tentative_g = current_g + world.get_cell_cost(nx, ny, target_pos)
+            new_dir = (dx, dy)
+            turn_cost = 0.0
+            if last_dir is not None and last_dir != new_dir:
+                # Turn penalty to model civil engineering alignment (preferring straight lines and avoiding zig-zags)
+                turn_cost = 15.0
 
-            if tentative_g < best_g.get(neighbor, float('inf')):
-                best_g[neighbor] = tentative_g
+            ph = 1.0
+            if hasattr(world, 'pheromones'):
+                ph = world.pheromones[nx][ny]
+
+            tentative_g = current_g + (world.get_cell_cost(nx, ny, target_pos) / ph) + turn_cost
+
+            if tentative_g < best_g.get((neighbor, new_dir), float('inf')):
+                best_g[(neighbor, new_dir)] = tentative_g
                 f_total = tentative_g + (abs(nx - tx) + abs(ny - ty))
-                heapq.heappush(open_set, (f_total, tentative_g, neighbor, path + [neighbor]))
+                heapq.heappush(open_set, (f_total, tentative_g, neighbor, path + [neighbor], new_dir))
 
     return None
 
