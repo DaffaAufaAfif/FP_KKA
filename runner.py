@@ -49,31 +49,36 @@ from model.world import WorldBuilder, World
 from ui.app import SimulationUI  # Import UI buatanmu
 
 def main():
-    USER_DE_PATH = 50.0 
-    JUMLAH_NODE = 25
-    MAP_INPUT = [(1,1),(1,2),(2,1),(4,4),(3,4)]
+    # USER_DE_PATH = 50.0 
+    # JUMLAH_NODE = 25
+    # MAP_INPUT = [(1,1),(1,2),(2,1),(4,4),(3,4)]
     
-    # Generate peta dasar
-    builder = WorldBuilder(size=(15,15), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH, inp=MAP_INPUT)
+    # # Generate peta dasar
+    # builder = WorldBuilder(size=(15,15), num_nodes=JUMLAH_NODE, random_nodes=True, de_path=USER_DE_PATH, inp=MAP_INPUT)
 
-    # Inisialisasi dunia simulasi runtime
-    my_world = World(
-        x=builder.x,
-        y=builder.y,
-        node_positions=builder.node_positions,
-        pos_to_cluster=builder.pos_to_cluster,
-        cluster_members=builder.cluster_members,
-        default_cost=builder.de_path,
-        threshold=2,
-        growth_rate=2.0,
-        discount_factor=0.01,
-    )
+    # # Inisialisasi dunia simulasi runtime
+    # my_world = World(
+    #     x=builder.x,
+    #     y=builder.y,
+    #     node_positions=builder.node_positions,
+    #     pos_to_cluster=builder.pos_to_cluster,
+    #     cluster_members=builder.cluster_members,
+    #     default_cost=builder.de_path,
+    #     threshold=2,
+    #     growth_rate=2.0,
+    #     discount_factor=0.01,
+    # )
 
-    print("Membuka Simulator Rute Jalan (Pygame)...")
+    # print("Membuka Simulator Rute Jalan (Pygame)...")
     
-    # Panggil dan jalankan aplikasi UI Pygame milikmu
-    app = SimulationUI(my_world, builder, cell_size=40)
+    # # Panggil dan jalankan aplikasi UI Pygame milikmu
+    # app = SimulationUI(my_world, builder, cell_size=40)
+    # app.run()
+    
+    print("Membuka City Planner Mode...")
+    # Jalankan aplikasi langsung dengan ukuran grid 15x15 default
+    app = SimulationUI(size=(15, 15), cell_size=32)
     app.run()
-
+    
 if __name__ == "__main__":
     main()
