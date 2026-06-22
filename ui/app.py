@@ -16,6 +16,9 @@ BLUE_TEXT = (96, 165, 250)
 ROAD_SHARING = (52, 211, 153)   # Hijau neon
 ROAD_CONGESTED = (248, 113, 113)# Merah pastel
 
+TERRAIN_SWAMP = (120, 110, 85)   # Cokelat lumpur / rawa
+TERRAIN_MOUNTAIN = (75, 85, 100) # Abu-abu batu / gunung
+
 class SimulationUI:
     def __init__(self, size=(15, 15), cell_size=32):
         pygame.init()
@@ -64,6 +67,12 @@ class SimulationUI:
         self.is_running = False
         self.current_generation = 0
         self.best_cost = 0.0
+        
+        # Matriks sementara untuk menyimpan koordinat rawa (-10) dan gunung (inf) di fase planning
+        # Ubah bagian paling bawah di __init__ kamu:
+        # Default cost tanah kosong adalah 50.0
+        self.planning_terrain = [[50.0 for _ in range(self.grid_y_size)] for _ in range(self.grid_x_size)]
+        self.brush_mode = "KOTA"
 
     def draw_rounded_panel(self, rect, color, radius=8):
         pygame.draw.rect(self.screen, color, rect, border_radius=radius)
@@ -81,17 +90,28 @@ class SimulationUI:
                     self.cell_size
                 )
                 
-                # Render jalan hanya jika sudah masuk mode SIMULATION
-                if self.mode == "SIMULATION" and self.world:
-                    layers = self.world.road_layers[x][y]
-                    if layers > 0:
-                        self.screen.blit(self.icon_road, (cell_rect.x, cell_rect.y))
-                        overlay = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
-                        if layers <= self.world.max_traf:
-                            overlay.fill((52, 211, 153, 100)) 
-                        else:
-                            overlay.fill((248, 113, 113, 150)) 
-                        self.screen.blit(overlay, (cell_rect.x, cell_rect.y))
+                # Ambil nilai rintangan alam
+                # Cek nilai terrain (ambil dari world jika simulation, ambil dari planning_terrain jika planning)
+                val = self.world.terrain_map[x][y] if (self.mode == "SIMULATION" and self.world) else self.planning_terrain[x][y]
+                layers = self.world.road_layers[x][y] if (self.mode == "SIMULATION" and self.world) else 0
+                
+                # Cek bobot biaya riil untuk menentukan warna visual
+                if val == float('inf'):
+                    pygame.draw.rect(self.screen, TERRAIN_MOUNTAIN, cell_rect)
+                elif val > 50.0 and val != float('inf'): 
+                    pygame.draw.rect(self.screen, TERRAIN_SWAMP, cell_rect) # Jika di atas cost normal (50), berarti rawa
+                else:
+                    pygame.draw.rect(self.screen, BG_PANEL, cell_rect)
+                    
+                # Timpa Gambar Ikon Jalan Tol jika koordinat tersebut dilewati rute GA
+                if layers > 0 and self.mode == "SIMULATION":
+                    self.screen.blit(self.icon_road, (cell_rect.x, cell_rect.y))
+                    overlay = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
+                    if layers <= self.world.max_traf:
+                        overlay.fill((52, 211, 153, 100))
+                    else:
+                        overlay.fill((248, 113, 113, 150))
+                    self.screen.blit(overlay, (cell_rect.x, cell_rect.y))
                 
                 pygame.draw.rect(self.screen, GRID_LINE, cell_rect, 1)
 
@@ -121,7 +141,7 @@ class SimulationUI:
     def draw_right_panels(self):
         sidebar_x = self.grid_w + (self.padding * 2)
         
-        # PANEL 1: Simulation Stats
+        # PANEL 1: Simulation Stats (Tetap sama seperti sebelumnya)
         info_rect = pygame.Rect(sidebar_x, self.padding + 50, self.sidebar_w, 180)
         self.draw_rounded_panel(info_rect, BG_PANEL)
         self.screen.blit(self.header_font.render("Simulation Info", True, TEXT_WHITE), (sidebar_x + 15, self.padding + 65))
@@ -137,57 +157,57 @@ class SimulationUI:
         for i, (label, val) in enumerate(stats):
             y_pos = self.padding + 95 + (i * 22)
             self.screen.blit(self.font.render(label, True, TEXT_MUTED), (sidebar_x + 15, y_pos))
-            self.screen.blit(self.font.render(val, True, TEXT_WHITE if label != "Application Mode" else BLUE_TEXT), (sidebar_x + 140, y_pos))
+            self.screen.blit(self.font.render(val, True, TEXT_WHITE), (sidebar_x + 140, y_pos))
 
-        # PANEL 2: Dynamic Controls based on current mode
-        ctrl_rect = pygame.Rect(sidebar_x, self.padding + 245, self.sidebar_w, 240)
+        # PANEL 2: Controls (Disesuaikan ulang posisinya)
+        ctrl_rect = pygame.Rect(sidebar_x, self.padding + 245, self.sidebar_w, 260) # Dipertinggi sedikit
         self.draw_rounded_panel(ctrl_rect, BG_PANEL)
         self.screen.blit(self.header_font.render("Controls", True, TEXT_WHITE), (sidebar_x + 15, self.padding + 260))
         
         if self.mode == "PLANNING":
             controls_text = [
-                "[Mous Klik]   Taruh / Hapus Kota",
-                "[G]           Acak Posisi Kota (25 Node)", # Tambahkan ini
-                "[ENTER]       Kunci & Build Map",
-                "[R]           Reset Seluruh Node",
+                "[Klik Kiri]    Taruh/Hapus Bangunan",
+                "[G]            Acak 25 Posisi Bangunan",
+                "[1]            Brush Mode: BANGUNAN",
+                "[2]            Brush Mode: RAWA",
+                "[3]            Brush Mode: GUNUNG",
+                "[H]            Brush Mode: HANCUR MEDAN",
+                "[ENTER]        Kunci & Build Map",
                 "",
-                "Petunjuk:",
-                "Taruh kota manual ATAU pencet G",
-                "untuk mengacak posisi kota,",
-                "kemudian tekan ENTER."
+                "Kuas Aktif: " + self.brush_mode
             ]
         else:
             controls_text = [
                 "[SPACE]       Pause / Resume GA",
                 "[M]           Brush Mode: MACET",
-                "[H]           Brush Mode: HANCUR",
+                "[H]           Brush Mode: HANCUR JALAN",
                 "[R]           Kembali ke Planning",
                 "",
                 "Kuas Aktif: " + self.brush_mode,
-                "Klik-Drag kiri di grid kosong",
-                "untuk pasang penalti macet."
+                "Klik-Drag kiri di grid untuk pasang",
+                "penalti kemacetan real-time."
             ]
             
         for i, line in enumerate(controls_text):
-            y_pos = self.padding + 290 + (i * 20)
+            y_pos = self.padding + 290 + (i * 19)
             color = BLUE_TEXT if line.startswith("[") else TEXT_MUTED
-            if "Petunjuk" in line: color = TEXT_WHITE
             self.screen.blit(self.font.render(line, True, color), (sidebar_x + 15, y_pos))
 
     def build_simulation_world(self):
-        """Membuat instance objek WorldBuilder dan World asli menggunakan koordinat kustom user"""
         if len(self.input_nodes) < 2:
             print("Taruh minimal 2 kota sebelum melakukan simulasi!")
             return
             
         USER_DE_PATH = 50.0
-        # Panggil builder dengan input koordinat kustom
+        
+        # 1. Build map dasar dengan melempar matriks cost riil dari UI
         self.builder = WorldBuilder(
             size=(self.grid_x_size, self.grid_y_size),
             num_nodes=len(self.input_nodes),
-            random_nodes=False, # Matikan randomizer!
+            random_nodes=False,
             de_path=USER_DE_PATH,
-            inp=self.input_nodes # Overwrite pakai hasil klik user!
+            inp=self.input_nodes,
+            tile_weights=self.planning_terrain # <--- KUNCI UTAMA: Oper cost dari UI ke backend!
         )
 
         self.world = World(
@@ -202,8 +222,15 @@ class SimulationUI:
             discount_factor=0.01,
         )
         
+        # --- SINKRONISASI MEDAN YANG SUDAH MATANG ---
+        for x in range(self.grid_x_size):
+            for y in range(self.grid_y_size):
+                # Kunci biaya awal alamiah ke terrain_map di backend
+                self.world.terrain_map[x][y] = self.planning_terrain[x][y]
+        
         self.mode = "SIMULATION"
-        print("World berhasil di-build! Masuk ke Simulation Mode.")
+        self.brush_mode = "MACET"
+        print("World berhasil dibuat! Masuk ke Simulation Mode.")
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -213,63 +240,65 @@ class SimulationUI:
                 
             elif event.type == pygame.KEYDOWN:
                 if self.mode == "PLANNING":
-                    if event.key == pygame.K_RETURN: # Tekan ENTER
+                    if event.key == pygame.K_RETURN:
                         self.build_simulation_world()
                     elif event.key == pygame.K_r:
                         self.input_nodes.clear()
+                        self.planning_terrain = [[0 for _ in range(self.grid_y_size)] for _ in range(self.grid_x_size)]
                     elif event.key == pygame.K_g:
-                        self.input_nodes.clear() # Bersihkan dulu input sebelumnya
+                        self.input_nodes.clear()
                         import random
-                        # Kumpulkan semua kemungkinan koordinat di grid
                         all_positions = [(i, j) for i in range(self.grid_x_size) for j in range(self.grid_y_size)]
-                        # Ambil 25 koordinat acak yang unik (bisa kamu ganti jumlahnya sesuai kebutuhan)
                         jumlah_node_acak = min(25, len(all_positions))
                         self.input_nodes = random.sample(all_positions, jumlah_node_acak)
+                    # Tombol ganti brush di mode planning
+                    elif event.key == pygame.K_1:   self.brush_mode = "KOTA"
+                    elif event.key == pygame.K_2:   self.brush_mode = "RAWA"
+                    elif event.key == pygame.K_3:   self.brush_mode = "GUNUNG"
+                    elif event.key == pygame.K_h:   self.brush_mode = "HANCUR MEDAN"
                 
                 elif self.mode == "SIMULATION":
                     if event.key == pygame.K_SPACE:
                         self.is_running = not self.is_running
-                    elif event.key == pygame.K_m:
-                        self.brush_mode = "MACET"
-                    elif event.key == pygame.K_h:
-                        self.brush_mode = "HANCUR"
+                    elif event.key == pygame.K_m:   self.brush_mode = "MACET"
+                    elif event.key == pygame.K_h:   self.brush_mode = "HANCUR JALAN"
                     elif event.key == pygame.K_r:
-                        # Reset total balik ke fase gambar kota awal
                         self.mode = "PLANNING"
                         self.world = None
                         self.builder = None
                         self.current_generation = 0
                         self.best_cost = 0.0
                         self.is_running = False
+                        self.brush_mode = "KOTA"
 
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            # Logika Klik Tunggal / Drag Mouse
+            elif pygame.mouse.get_pressed()[0]:
                 mx, my = pygame.mouse.get_pos()
                 grid_start_y = self.padding + 50
-                
-                # Pastikan klik berada di dalam area grid
                 if self.padding <= mx < self.padding + self.grid_w and grid_start_y <= my < grid_start_y + self.grid_h:
                     grid_x = (mx - self.padding) // self.cell_size
                     grid_y = (my - grid_start_y) // self.cell_size
                     coord = (grid_x, grid_y)
                     
                     if self.mode == "PLANNING":
-                        if coord in self.input_nodes:
-                            self.input_nodes.remove(coord) # Jika di-klik lagi, hapus kotanya
-                        else:
-                            self.input_nodes.append(coord) # Tambah kota baru
+                        if self.brush_mode == "KOTA":
+                            # Klik biasa (bukan drag ditahan) agar tidak duplikat instant-remove
+                            if event.type == pygame.MOUSEBUTTONDOWN:
+                                if coord in self.input_nodes: self.input_nodes.remove(coord)
+                                else: self.input_nodes.append(coord)
+                        elif self.brush_mode == "RAWA":
+                            self.planning_terrain[grid_x][grid_y] = 250.0  # Rawa langsung diberi cost mahal (5x lipat)
+                        elif self.brush_mode == "GUNUNG":
+                            self.planning_terrain[grid_x][grid_y] = float('inf') # Gunung langsung diberi cost tak hingga
+                        elif self.brush_mode == "HANCUR MEDAN":
+                            self.planning_terrain[grid_x][grid_y] = 50.0   # Kembalikan ke cost normal tanah kosong
                             
-            # Klik kiri ditahan & geser (Hanya berlaku di Simulation Mode untuk gambar macet)
-            elif pygame.mouse.get_pressed()[0] and self.mode == "SIMULATION" and self.world:
-                mx, my = pygame.mouse.get_pos()
-                grid_start_y = self.padding + 50
-                if self.padding <= mx < self.padding + self.grid_w and grid_start_y <= my < grid_start_y + self.grid_h:
-                    grid_x = (mx - self.padding) // self.cell_size
-                    grid_y = (my - grid_start_y) // self.cell_size
-                    
-                    if self.brush_mode == "MACET":
-                        self.world.road_layers[grid_x][grid_y] = float('inf') # Set biaya jadi inf!
-                    elif self.brush_mode == "HANCUR":
-                        self.world.road_layers[grid_x][grid_y] = 0
+                    elif self.mode == "SIMULATION" and self.world:
+                        if self.brush_mode == "MACET":
+                            self.world.road_layers[grid_x][grid_y] = 5
+                        elif self.brush_mode == "HANCUR JALAN":
+                            # Kembalikan ke kondisi medan asli sebelum kena jalan tol
+                            self.world.road_layers[grid_x][grid_y] = self.planning_terrain[grid_x][grid_y]
 
     def run(self):
         while True:

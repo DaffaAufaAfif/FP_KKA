@@ -152,11 +152,9 @@ class World:
     def __init__(self, x: int, y: int, node_positions: dict, default_cost: float, threshold: int = 1, growth_rate: float = 2.0, discount_factor: float = 0.2, pos_to_cluster: Dict[Tuple[int,int], int] = None, cluster_members: Dict[int, set] = None):
         self.x = x
         self.y = y
-        # node_positions is expected node_id -> (x,y)
         self.node_pos: Dict[int, Tuple[int, int]] = node_positions
         self.node_set = set(node_positions.values())
 
-        # cluster structures may be provided by WorldBuilder as attributes; if not, initialize
         self.pos_to_cluster: Dict[Tuple[int, int], int] = pos_to_cluster or {}
         self.cluster_members: Dict[int, set] = cluster_members or {}
 
@@ -166,16 +164,18 @@ class World:
         self.discount_factor = discount_factor
 
         self.road_layers = [[0 for _ in range(self.y)] for _ in range(self.x)]
+        # --- TAMBAHKAN INI: Wadah permanen untuk mengunci rawa/gunung ---
+        self.terrain_map = [[0 for _ in range(self.y)] for _ in range(self.x)]
+        
         self.connected_clusters: set = set()
         self.connected_nodes: set = set()
-        # graph of clusters connected by roads: cluster_id -> set(cluster_id)
         self.cluster_graph: Dict[int, set] = defaultdict(set)
 
     def reset_world(self):
+        # Kembalikan road_layers menjadi kosong 0, TANPA menghapus isi terrain_map
         self.road_layers = [[0 for _ in range(self.y)] for _ in range(self.x)]
         self.connected_clusters.clear()
         self.connected_nodes.clear()
-        # reset cluster graph built from roads
         self.cluster_graph = defaultdict(set)
 
     def add_road_path(self, path: List[Tuple[int, int]]):
@@ -229,23 +229,30 @@ class World:
             return float('inf')
 
         current_pos = (x, y)
-
         if current_pos == target_pos:
             return 0.0
 
-        # Do NOT allow building road on node tiles. Treat node cells as
-        # impassable for road placement.
         if current_pos in self.node_set:
             return float('inf')
+        
+        # --- 1. AMBIL BIAYA ALAM ASLI LANGSUNG DARI TERRAIN MAP ---
+        # Nilainya otomatis berupa: 50.0 (Normal), 250.0 (Rawa), atau inf (Gunung)
+        base_cost = self.terrain_map[x][y]
+        
+        if base_cost == float('inf'):
+            return float('inf')  # Gunung mutlak dilarang ditembus!
 
+        # --- 2. HITUNG MODIFIKASI JALAN TOL DAN MACET SEPERTI BIASA ---
         num_layers = self.road_layers[x][y]
         if num_layers == 0:
-            return self.default_cost
+            return base_cost # Jika tanah kosong, kembalikan nilai dasar alamnya
         elif num_layers <= self.max_traf:
-            return self.default_cost * self.discount_factor
+            # Jika dipakai bersama dan lancar, dapat diskon dari nilai dasar alamnya!
+            return base_cost * self.discount_factor
         else:
+            # Jika macet, dapat penalti eksponensial dari nilai dasar alamnya!
             excess_layers = num_layers - self.max_traf
-            return self.default_cost * (self.growth_rate ** excess_layers)
+            return base_cost * (self.growth_rate ** excess_layers)
 
     def network_is_fully_connected(self) -> bool:
         """Return True if all clusters with members are connected together by a continuous road network.
@@ -506,9 +513,15 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
             nb = (sx + dx, sy + dy)
             if 0 <= nb[0] < world.x and 0 <= nb[1] < world.y:
                 if nb not in world.node_set:
-                    start_positions.append(nb)
+                    # --- TAMBAHKAN FILTER LOGIKA INI ---
+                    # Jika tetangga kota awal ini ternyata adalah GUNUNG (inf), JANGAN dimasukkan!
+                    if world.get_cell_cost(nb[0], nb[1], target_pos) != float('inf'):
+                        start_positions.append(nb)
+                    # -----------------------------------
     else:
-        start_positions.append(start_pos)
+        # Jika start_pos bukan node kota, pastikan dia juga bukan gunung
+        if world.get_cell_cost(start_pos[0], start_pos[1], target_pos) != float('inf'):
+            start_positions.append(start_pos)
 
     for sp in start_positions:
         h = abs(sp[0] - tx) + abs(sp[1] - ty)
@@ -518,13 +531,8 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
     while open_set:
         _priority_, current_g, current, path = heapq.heappop(open_set)
 
-        # If target is a node, success when current is adjacent to target
-        if target_is_node:
-            if abs(current[0] - tx) + abs(current[1] - ty) == 1:
-                return path
-        else:
-            if current == target_pos:
-                return path
+        # 1. PINDAHKAN PENGECEKAN SUKSES KE BAWAH SETELAH VALIDASI COST!
+        # Jangan langsung return di sini jika petak yang sedang diinjak ternyata ilegal/inf!
 
         if current_g > best_g.get(current, float('inf')):
             continue
@@ -534,13 +542,27 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
             nx, ny = cx + dx, cy + dy
             neighbor = (nx, ny)
 
-            # skip out-of-bounds
+            # Skip jika di luar batas grid
             if not (0 <= nx < world.x and 0 <= ny < world.y):
                 continue
 
-            # Do not step onto node tiles
+            # Skip jika menabrak bangunan kota lain
             if neighbor in world.node_set:
                 continue
+
+            # --- KUNCI UTAMA PERBAIKAN ---
+            # Cek cost sel tujuan. Jika bernilai INF (Gunung), MUTLAK dilarang diinjak!
+            if world.get_cell_cost(nx, ny, target_pos) == float('inf'):
+                continue
+            # ------------------------------
+
+            # SEKARANG AMAN UNTUK CEK APAKAH TETANGGA INI SUDAH MENCAPAI TARGET
+            if target_is_node:
+                if abs(nx - tx) + abs(ny - ty) == 1:
+                    return path + [neighbor] # Kembalikan jalur sukses yang valid dan legal!
+            else:
+                if neighbor == target_pos:
+                    return path + [neighbor]
 
             tentative_g = current_g + world.get_cell_cost(nx, ny, target_pos)
 
