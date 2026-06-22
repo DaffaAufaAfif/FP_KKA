@@ -248,26 +248,60 @@ class World:
             return self.default_cost * (self.growth_rate ** excess_layers)
 
     def network_is_fully_connected(self) -> bool:
-        """Return True if all clusters with members are connected together by roads.
+        """Return True if all clusters with members are connected together by a continuous road network.
 
-        Uses BFS on `cluster_graph`. If there is 0 or 1 cluster, treat as connected.
+        A continuous road network is a single connected component of road cells
+        that is adjacent to all clusters.
         """
         clusters = set(self.cluster_members.keys())
         if len(clusters) <= 1:
             return True
 
-        # pick a starting cluster that exists
-        start = next(iter(clusters))
-        seen = {start}
-        queue = [start]
-        while queue:
-            c = queue.pop(0)
-            for nb in self.cluster_graph.get(c, set()):
-                if nb not in seen:
-                    seen.add(nb)
-                    queue.append(nb)
+        # Find all road cells
+        road_cells = set()
+        for x in range(self.x):
+            for y in range(self.y):
+                if self.road_layers[x][y] > 0:
+                    road_cells.add((x, y))
 
-        return seen >= clusters
+        if not road_cells:
+            return False
+
+        # Find connected components of road cells
+        visited = set()
+        components = []
+        for cell in road_cells:
+            if cell in visited:
+                continue
+            comp = set()
+            queue = [cell]
+            visited.add(cell)
+            while queue:
+                cx, cy = queue.pop(0)
+                comp.add((cx, cy))
+                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                    nx, ny = cx + dx, cy + dy
+                    neighbor = (nx, ny)
+                    if neighbor in road_cells and neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+            components.append(comp)
+
+        # For each component, check which clusters it is adjacent to
+        for comp in components:
+            adjacent_clusters = set()
+            for rx, ry in comp:
+                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                    nx, ny = rx + dx, ry + dy
+                    cid = self.pos_to_cluster.get((nx, ny))
+                    if cid is not None:
+                        adjacent_clusters.add(cid)
+            
+            # If this component is adjacent to all clusters, then the network is fully connected!
+            if adjacent_clusters >= clusters:
+                return True
+
+        return False
 
     def cluster_of_node(self, node_id: int) -> int | None:
         """Return cluster id for a given node id, or None if not assigned."""
@@ -333,25 +367,71 @@ class World:
     def get_cluster_components(self) -> List[set]:
         """Return a list of connected components (sets of cluster_ids) in the cluster graph.
 
-        Uses BFS/graph flood-fill over `self.cluster_graph`. Clusters with no edges
-        appear as singletons. The order is arbitrary.
+        Two clusters belong to the same component if they are connected through the road network
+        without transiting through houses.
         """
         clusters = set(self.cluster_members.keys())
-        components: List[set] = []
-        visited = set()
+        
+        # Find all road cells
+        road_cells = set()
+        for x in range(self.x):
+            for y in range(self.y):
+                if self.road_layers[x][y] > 0:
+                    road_cells.add((x, y))
 
+        # Find connected components of road cells
+        visited_cells = set()
+        road_components = []
+        for cell in road_cells:
+            if cell in visited_cells:
+                continue
+            comp = set()
+            queue = [cell]
+            visited_cells.add(cell)
+            while queue:
+                cx, cy = queue.pop(0)
+                comp.add((cx, cy))
+                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                    nx, ny = cx + dx, cy + dy
+                    neighbor = (nx, ny)
+                    if neighbor in road_cells and neighbor not in visited_cells:
+                        visited_cells.add(neighbor)
+                        queue.append(neighbor)
+            road_components.append(comp)
+
+        # Build a graph of clusters where two clusters are adjacent if they touch the same road component
+        adj = defaultdict(set)
+        for comp in road_components:
+            adjacent_clusters = set()
+            for rx, ry in comp:
+                for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                    nx, ny = rx + dx, ry + dy
+                    cid = self.pos_to_cluster.get((nx, ny))
+                    if cid is not None:
+                        adjacent_clusters.add(cid)
+            
+            # Connect all these adjacent clusters together in the graph
+            for c1 in adjacent_clusters:
+                for c2 in adjacent_clusters:
+                    if c1 != c2:
+                        adj[c1].add(c2)
+                        adj[c2].add(c1)
+
+        # Find connected components of clusters in this graph
+        components = []
+        visited_clusters = set()
         for c in clusters:
-            if c in visited:
+            if c in visited_clusters:
                 continue
             comp = set()
             queue = [c]
-            visited.add(c)
+            visited_clusters.add(c)
             while queue:
                 cur = queue.pop(0)
                 comp.add(cur)
-                for nb in self.cluster_graph.get(cur, set()):
-                    if nb not in visited:
-                        visited.add(nb)
+                for nb in adj.get(cur, set()):
+                    if nb not in visited_clusters:
+                        visited_clusters.add(nb)
                         queue.append(nb)
             components.append(comp)
 
@@ -425,7 +505,8 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
             nb = (sx + dx, sy + dy)
             if 0 <= nb[0] < world.x and 0 <= nb[1] < world.y:
-                start_positions.append(nb)
+                if nb not in world.node_set:
+                    start_positions.append(nb)
     else:
         start_positions.append(start_pos)
 
