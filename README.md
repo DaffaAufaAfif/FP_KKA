@@ -45,3 +45,23 @@ Kolaborasi ini membagi tugas secara adil: **GA** bertugas sebagai otak makro unt
 3. **Seleksi**: Solusi dengan nilai fitness rendah akan dibuang, sementara kromosom dengan fitness tinggi dipertahankan untuk menjadi orang tua (*parent*).
 4. **Crossover & Mutasi**: Pasangan orang tua terbaik digabungkan fiturnya menggunakan *crossover* pada array biner untuk melahirkan variasi anak baru. Mekanisme mutasi dilakukan dengan cara *bit-flip* (mengubah `0` menjadi `1` atau sebaliknya) secara acak pada gen tertentu agar program dapat menemukan alternatif jalan pintas yang tidak terduga.
 5. **Iterasi & Visualisasi**: Proses evaluasi hingga mutasi diulang terus-menerus selama puluhan hingga ratusan generasi. Kromosom biner terbaik pada generasi terakhir akan diambil, digambar ulang oleh A* pada kanvas bersih, lalu divisualisasikan sebagai cetak biru jaringan jalan yang paling optimal.
+
+---
+
+## Install Dependencies
+
+To install required Python packages for this project, create and activate a virtual environment, then install from the included requirements file:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+If you don't want a virtualenv, you can install the main dependency directly:
+
+```bash
+pip install pygame
+```
+
+The project currently depends on `pygame` in addition to standard-library modules.

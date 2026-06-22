@@ -172,20 +172,33 @@ class World:
         """Increment road layers and mark clusters/nodes touched by the path."""
         path_clusters = []
         for (px, py) in path:
-            if 0 <= px < self.x and 0 <= py < self.y:
+            if not (0 <= px < self.x and 0 <= py < self.y):
+                continue
+
+            # Do not build roads on node tiles themselves. Paths should not
+            # contain node positions (A* avoids them). Guard anyway.
+            pos = (px, py)
+            if pos not in self.node_set:
                 self.road_layers[px][py] += 1
-                pos = (px, py)
-                cid = self.pos_to_cluster.get(pos)
+
+            # If this road cell is adjacent to any node, mark that node's
+            # cluster as connected. This allows connecting to nodes without
+            # building roads on top of node tiles.
+            adjacent_clusters = []
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nb = (px + dx, py + dy)
+                cid = self.pos_to_cluster.get(nb)
                 if cid is not None:
-                    # mark entire cluster as connected
-                    if cid not in self.connected_clusters:
-                        self.connected_clusters.add(cid)
-                        members = self.cluster_members.get(cid, set())
-                        for nid in members:
-                            self.connected_nodes.add(nid)
-                    # record cluster encountered along this path (in order)
-                    if not path_clusters or path_clusters[-1] != cid:
-                        path_clusters.append(cid)
+                    adjacent_clusters.append(cid)
+
+            for cid in adjacent_clusters:
+                if cid not in self.connected_clusters:
+                    self.connected_clusters.add(cid)
+                    members = self.cluster_members.get(cid, set())
+                    for nid in members:
+                        self.connected_nodes.add(nid)
+                if not path_clusters or path_clusters[-1] != cid:
+                    path_clusters.append(cid)
 
         # add edges between consecutive clusters encountered on this path
         for i in range(len(path_clusters) - 1):
@@ -210,6 +223,8 @@ class World:
         if current_pos == target_pos:
             return 0.0
 
+        # Do NOT allow building road on node tiles. Treat node cells as
+        # impassable for road placement.
         if current_pos in self.node_set:
             return float('inf')
 
@@ -243,6 +258,67 @@ class World:
                     queue.append(nb)
 
         return seen >= clusters
+
+    def cluster_of_node(self, node_id: int) -> int | None:
+        """Return cluster id for a given node id, or None if not assigned."""
+        pos = self.node_pos.get(node_id)
+        if pos is None:
+            return None
+        return self.pos_to_cluster.get(pos)
+
+    def nodes_in_same_component(self, node_a: int, node_b: int) -> bool:
+        """Return True if two nodes belong to the same connected component
+        in the `cluster_graph` (i.e., there exists a road path connecting
+        their clusters). Nodes in the same raw cluster are considered
+        connected as well.
+        """
+        ca = self.cluster_of_node(node_a)
+        cb = self.cluster_of_node(node_b)
+        if ca is None or cb is None:
+            return False
+        if ca == cb:
+            return True
+
+        # BFS from ca over cluster_graph
+        seen = {ca}
+        queue = [ca]
+        while queue:
+            c = queue.pop(0)
+            for nb in self.cluster_graph.get(c, set()):
+                if nb == cb:
+                    return True
+                if nb not in seen:
+                    seen.add(nb)
+                    queue.append(nb)
+        return False
+
+    def find_shortest_path_between_clusters(self, cluster_a: int, cluster_b: int):
+        """Find shortest A* path between any node in `cluster_a` and any
+        node in `cluster_b`. Returns (path, cost) or (None, inf).
+        This does not modify world state.
+        """
+        best_path = None
+        best_cost = inf
+
+        members_a = self.cluster_members.get(cluster_a, set())
+        members_b = self.cluster_members.get(cluster_b, set())
+
+        for nid_a in members_a:
+            start = self.node_pos.get(nid_a)
+            if start is None:
+                continue
+            for nid_b in members_b:
+                target = self.node_pos.get(nid_b)
+                if target is None:
+                    continue
+                route = a_star_search(self, start, target)
+                if route:
+                    cost = sum(self.get_cell_cost(x, y, target) for x, y in route[1:])
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_path = route
+
+        return best_path, best_cost
 
     def get_cluster_components(self) -> List[set]:
         """Return a list of connected components (sets of cluster_ids) in the cluster graph.
@@ -323,18 +399,41 @@ class World:
 
 def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[int, int]):
     tx, ty = target_pos
+
+    # If target is a node tile, we cannot step onto it. Instead, the goal is
+    # to reach any adjacent cell to the target node.
+    target_is_node = target_pos in world.node_set
+
     open_set = []
+    best_g = {}
 
-    start_h = abs(start_pos[0] - tx) + abs(start_pos[1] - ty)
-    heapq.heappush(open_set, (start_h, 0.0, start_pos, [start_pos]))
+    # Initialize start positions: if start is a node, begin from its neighbors
+    # (we cannot build on node cells). Otherwise start at start_pos.
+    start_positions = []
+    if start_pos in world.node_set:
+        sx, sy = start_pos
+        for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            nb = (sx + dx, sy + dy)
+            if 0 <= nb[0] < world.x and 0 <= nb[1] < world.y:
+                start_positions.append(nb)
+    else:
+        start_positions.append(start_pos)
 
-    best_g = {start_pos: 0.0}
+    for sp in start_positions:
+        h = abs(sp[0] - tx) + abs(sp[1] - ty)
+        heapq.heappush(open_set, (h, 0.0, sp, [sp]))
+        best_g[sp] = 0.0
 
     while open_set:
         _priority_, current_g, current, path = heapq.heappop(open_set)
 
-        if current == target_pos:
-            return path
+        # If target is a node, success when current is adjacent to target
+        if target_is_node:
+            if abs(current[0] - tx) + abs(current[1] - ty) == 1:
+                return path
+        else:
+            if current == target_pos:
+                return path
 
         if current_g > best_g.get(current, float('inf')):
             continue
@@ -344,13 +443,21 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
             nx, ny = cx + dx, cy + dy
             neighbor = (nx, ny)
 
+            # skip out-of-bounds
+            if not (0 <= nx < world.x and 0 <= ny < world.y):
+                continue
+
+            # Do not step onto node tiles
+            if neighbor in world.node_set:
+                continue
+
             tentative_g = current_g + world.get_cell_cost(nx, ny, target_pos)
 
             if tentative_g < best_g.get(neighbor, float('inf')):
                 best_g[neighbor] = tentative_g
                 f_total = tentative_g + (abs(nx - tx) + abs(ny - ty))
                 heapq.heappush(open_set, (f_total, tentative_g, neighbor, path + [neighbor]))
-        
+
     return None
 
 
