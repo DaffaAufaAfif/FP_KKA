@@ -124,6 +124,43 @@ class WorldBuilder:
                 self.pos_to_cluster[pos] = cid
                 x, y = pos
                 self._map[x][y] = -cid
+    
+    def check_node_accessibility(self, inp: List[Tuple[int, int]]) -> bool:
+        """
+        Memeriksa apakah semua kota berada dalam satu wilayah yang sama menggunakan Flood-fill.
+        Mengembalikan True jika semua kota saling terhubung (tidak terisolasi total oleh gunung).
+        """
+        if not inp:
+            return True
+            
+        # Ambil kota pertama dari input koordinat sebagai titik awal start flood-fill
+        start_node = inp[0]
+        
+        visited = set()
+        queue = [start_node]
+        visited.add(start_node)
+        
+        # Jalankan BFS / Flood-fill
+        while queue:
+            cx, cy = queue.pop(0)
+            
+            for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                nx, ny = cx + dx, cy + dy
+                neighbor = (nx, ny)
+                
+                # Pastikan koordinat berada di dalam batas grid
+                if 0 <= nx < self.x and 0 <= ny < self.y:
+                    # KUNCI: Gunakan self._map (bukan planning_terrain)
+                    if self._map[nx][ny] != float('inf') and neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append(neighbor)
+                        
+        # Periksa apakah ada koordinat kota yang tidak berhasil terjangkau oleh flood-fill
+        for node in inp[: self.n]:
+            if node not in visited:
+                return False # Ketemu kota yang terkurung/terisolasi total!
+                
+        return True # Aman, semua kota berada dalam satu daratan yang sama
 
     def __print__(self):
         """Print the grid with nodes and default costs (clusters shown by id)."""

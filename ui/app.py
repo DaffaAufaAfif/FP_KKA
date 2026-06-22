@@ -73,6 +73,10 @@ class SimulationUI:
         # Default cost tanah kosong adalah 50.0
         self.planning_terrain = [[50.0 for _ in range(self.grid_y_size)] for _ in range(self.grid_x_size)]
         self.brush_mode = "KOTA"
+        
+        # State untuk notifikasi error
+        self.error_message = ""      
+        self.error_timer = 0
 
     def draw_rounded_panel(self, rect, color, radius=8):
         pygame.draw.rect(self.screen, color, rect, border_radius=radius)
@@ -192,24 +196,60 @@ class SimulationUI:
             y_pos = self.padding + 290 + (i * 19)
             color = BLUE_TEXT if line.startswith("[") else TEXT_MUTED
             self.screen.blit(self.font.render(line, True, color), (sidebar_x + 15, y_pos))
+            
+    def draw_error_notification(self):
+        """Menggambar banner notifikasi merah jika error_timer aktif"""
+        if self.error_timer > 0:
+            # Kurangi durasi timer setiap frame berjalan
+            self.error_timer -= 1
+            
+            # Tentukan posisi banner di tengah area grid
+            banner_w = self.grid_w - 40
+            banner_h = 45
+            banner_x = self.padding + 20
+            banner_y = self.padding + 50 + (self.grid_h // 2) - (banner_h // 2)
+            
+            # Gambar background box melengkung berwarna merah solid/pastel
+            rect = pygame.Rect(banner_x, banner_y, banner_w, banner_h)
+            self.draw_rounded_panel(rect, (239, 68, 68)) # Warna Merah Solid (Tailwind Red 500)
+            
+            # Tambahkan outline putih tipis di sekeliling box agar kontras
+            pygame.draw.rect(self.screen, (255, 255, 255), rect, 1, border_radius=8)
+            
+            # Render teks pesan error berwarna putih bold
+            error_font = pygame.font.SysFont("Segoe UI", 14, bold=True)
+            text_surface = error_font.render(self.error_message, True, (255, 255, 255))
+            text_rect = text_surface.get_rect(center=(banner_x + banner_w // 2, banner_y + banner_h // 2))
+            
+            self.screen.blit(text_surface, text_rect)
 
     def build_simulation_world(self):
         if len(self.input_nodes) < 2:
-            print("Taruh minimal 2 kota sebelum melakukan simulasi!")
+            # Set notifikasi error di UI jika kota kurang dari 2
+            self.error_message = "Taruh minimal 2 kota!"
+            self.error_timer = 90  # 90 frame / 30 fps = Tampil selama 3 detik
             return
             
         USER_DE_PATH = 50.0
         
-        # 1. Build map dasar dengan melempar matriks cost riil dari UI
+        # 1. Inisialisasi builder terlebih dahulu
         self.builder = WorldBuilder(
             size=(self.grid_x_size, self.grid_y_size),
             num_nodes=len(self.input_nodes),
             random_nodes=False,
             de_path=USER_DE_PATH,
             inp=self.input_nodes,
-            tile_weights=self.planning_terrain # <--- KUNCI UTAMA: Oper cost dari UI ke backend!
+            tile_weights=self.planning_terrain
         )
 
+        # 2. PANGGIL DENGAN SATU ARGUMEN SAJA (self.input_nodes)
+        if not self.builder.check_node_accessibility(self.input_nodes):
+            self.error_message = "KOTA TERISOLASI OLEH GUNUNG!"
+            self.error_timer = 90  # Tampilkan selama 3 detik
+            self.builder = None
+            return # Batalkan build, tetap di PLANNING mode
+
+        # 3. Jika lolos, baru buat objek World asli seperti biasa
         self.world = World(
             x=self.builder.x,
             y=self.builder.y,
@@ -222,10 +262,9 @@ class SimulationUI:
             discount_factor=0.01,
         )
         
-        # --- SINKRONISASI MEDAN YANG SUDAH MATANG ---
+        # Sinkronisasi terrain map
         for x in range(self.grid_x_size):
             for y in range(self.grid_y_size):
-                # Kunci biaya awal alamiah ke terrain_map di backend
                 self.world.terrain_map[x][y] = self.planning_terrain[x][y]
         
         self.mode = "SIMULATION"
@@ -321,10 +360,14 @@ class SimulationUI:
                 self.current_generation = 20
                 self.is_running = False 
             
-            # Rendering
+            # --- AREA RENDERING UTAMA ---
             self.draw_grid_area()
             self.draw_cities()
             self.draw_right_panels()
+            
+            # PANGGILA HANDLER NOTIFIKASI DI SINI (Digambar paling atas agar tidak tertutup grid)
+            self.draw_error_notification()
+            # ----------------------------
             
             pygame.display.flip()
             self.clock.tick(30)
