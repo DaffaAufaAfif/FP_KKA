@@ -147,13 +147,14 @@ class SimulationUI:
         if self.mode == "PLANNING":
             controls_text = [
                 "[Mous Klik]   Taruh / Hapus Kota",
+                "[G]           Acak Posisi Kota (25 Node)", 
                 "[ENTER]       Kunci & Build Map",
                 "[R]           Reset Seluruh Node",
                 "",
                 "Petunjuk:",
-                "Taruh beberapa titik kota",
-                "di atas grid, kemudian",
-                "tekan ENTER untuk mulai."
+                "Taruh kota manual ATAU pencet G",
+                "untuk mengacak posisi kota,",
+                "kemudian tekan ENTER."
             ]
         else:
             controls_text = [
@@ -216,6 +217,14 @@ class SimulationUI:
                         self.build_simulation_world()
                     elif event.key == pygame.K_r:
                         self.input_nodes.clear()
+                    elif event.key == pygame.K_g:
+                        self.input_nodes.clear() # Bersihkan dulu input sebelumnya
+                        import random
+                        # Kumpulkan semua kemungkinan koordinat di grid
+                        all_positions = [(i, j) for i in range(self.grid_x_size) for j in range(self.grid_y_size)]
+                        # Ambil 25 koordinat acak yang unik (bisa kamu ganti jumlahnya sesuai kebutuhan)
+                        jumlah_node_acak = min(25, len(all_positions))
+                        self.input_nodes = random.sample(all_positions, jumlah_node_acak)
                 
                 elif self.mode == "SIMULATION":
                     if event.key == pygame.K_SPACE:
