@@ -654,7 +654,6 @@ def a_star_search(world: World, start_pos: Tuple[int, int], target_pos: Tuple[in
             if last_dir is not None and last_dir != new_dir:
                 # Turn penalty to model civil engineering alignment (preferring straight lines and avoiding zig-zags)
                 turn_cost = 15.0
-
             ph = 1.0
             if hasattr(world, 'pheromones'):
                 ph = world.pheromones[nx][ny]
