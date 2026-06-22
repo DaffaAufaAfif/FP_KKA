@@ -84,6 +84,8 @@ def main(argv=None):
     parser.add_argument('--gens', type=int, default=20, help='GA generations')
     parser.add_argument('--threshold', type=int, default=2, help='traffic threshold for sharing')
     parser.add_argument('--seed', type=int, default=None, help='random seed')
+    parser.add_argument('--tile-weights-file', type=str, default=None, help='path to JSON file with 2D list of tile weights')
+    parser.add_argument('--use-example-weights', choices=['center_block', 'vertical_stripe'], default=None, help='use a built-in example tile weights (overrides --size)')
 
     args = parser.parse_args(argv)
 
@@ -91,8 +93,38 @@ def main(argv=None):
         import random
         random.seed(args.seed)
 
+    # Prepare tile_weights if provided via file or example
+    tile_weights = None
+    if args.tile_weights_file:
+        import json
+        try:
+            with open(args.tile_weights_file, 'r', encoding='utf-8') as f:
+                tile_weights = json.load(f)
+        except Exception as e:
+            print(f"Gagal membaca tile-weights file: {e}")
+            return
+
+    if args.use_example_weights:
+        if args.use_example_weights == 'center_block':
+            args.size = (7, 7)
+            args.nodes = min(args.nodes, 10)
+            W, H = args.size
+            tile_weights = [[args.depath for _ in range(H)] for _ in range(W)]
+            # make a high-cost center block
+            for i in range(2, 5):
+                for j in range(2, 5):
+                    tile_weights[i][j] = args.depath * 10
+        elif args.use_example_weights == 'vertical_stripe':
+            args.size = (8, 8)
+            args.nodes = min(args.nodes, 12)
+            W, H = args.size
+            tile_weights = [[args.depath for _ in range(H)] for _ in range(W)]
+            # high-cost vertical stripe in middle
+            for i in range(W):
+                tile_weights[i][H//2] = args.depath * 20
+
     print("Membangun peta dan node...")
-    builder = WorldBuilder(size=tuple(args.size), num_nodes=args.nodes, random_nodes=True, de_path=args.depath, inp=[])
+    builder = WorldBuilder(size=tuple(args.size), num_nodes=args.nodes, random_nodes=True, de_path=args.depath, inp=[], tile_weights=tile_weights)
 
     my_world = World(
         x=builder.x,
@@ -131,6 +163,12 @@ def main(argv=None):
         print(f"Total Biaya Seluruh Jaringan Terpilih: {best_cost:.2f}")
 
     cetak_peta_2d(my_world)
+
+    # Print tile weights preview if available
+    if tile_weights is not None:
+        print("\nTile weights preview:")
+        for row in tile_weights:
+            print(" ".join(f"{v:.0f}" for v in row))
 
 
 if __name__ == '__main__':

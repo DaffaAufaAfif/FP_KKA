@@ -34,7 +34,7 @@ class WorldBuilder:
       - `_map`: grid with negative cluster ids for node cells
     """
 
-    def __init__(self, size: tuple[int, int] = (10, 10), num_nodes: int = 10, random_nodes: bool = True, de_path: float = 10.0, inp: list[tuple[int, int]] = []):
+    def __init__(self, size: tuple[int, int] = (10, 10), num_nodes: int = 10, random_nodes: bool = True, de_path: float = 10.0, inp: list[tuple[int, int]] = [], tile_weights: List[List[float]] | None = None):
         if de_path < 0:
             raise ValueError("Default path value cant be less than zero!")
 
@@ -45,7 +45,17 @@ class WorldBuilder:
         if (self.x * self.y) < self.n:
             raise ValueError("Ukuran grid terlalu kecil untuk jumlah node tersebut.")
 
-        self._map = [[self.de_path for _ in range(self.y)] for _ in range(self.x)]
+        # Initialize base map costs. If `tile_weights` is provided (not None),
+        # use it as the default grid of tile weights (must match size). Otherwise
+        # fill with the scalar `de_path` value.
+        if tile_weights is not None:
+            # basic validation of shape
+            if len(tile_weights) != self.x or any(len(row) != self.y for row in tile_weights):
+                raise ValueError("tile_weights must be a list of lists with dimensions matching `size`")
+            # copy to internal map
+            self._map = [[float(tile_weights[i][j]) for j in range(self.y)] for i in range(self.x)]
+        else:
+            self._map = [[self.de_path for _ in range(self.y)] for _ in range(self.x)]
 
         # node_id -> (x,y)
         self.node_positions: Dict[int, Tuple[int, int]] = {}
