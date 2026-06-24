@@ -2,7 +2,10 @@ import random
 from typing import List, Tuple
 from model.world import a_star_search
 
-def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int]]):
+# Module-level history of generations: list of tuples (best_chromosome, best_cost, best_paths)
+gens_history: list[tuple] = []
+
+def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int]], return_paths: bool = False):
     """Evaluate total cost for a chromosome (routing order) by running A* for each pair.
     
     This sequential routing is guided by pheromone levels on the world grid.
@@ -46,6 +49,8 @@ def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int
     # Enforce full connectivity
     try:
         if not world.network_is_fully_connected():
+            if return_paths:
+                return float('inf'), []
             return float('inf')
     except Exception:
         pass
@@ -76,6 +81,11 @@ def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int
         if num_cycles >= 1:
             total_cost -= 1000.0
 
+    if return_paths:
+        # Mengambil kumpulan list koordinat [(x1,y1), (x2,y2), ...] dari rute yang dibangun
+        all_paths = [route for _, route in routed_info]
+        return total_cost, all_paths
+
     return total_cost
 
 
@@ -102,6 +112,8 @@ def run_genetic_algorithm(world, pairs, pop_size=20, generations=20, mutation_ra
     print(f"Total Pasangan Rute: {num_pairs}")
     print(f"Jumlah Kluster: {len(world.cluster_members)}")
 
+    # reset module-level generation history for this run
+    gens_history.clear()
     for gen in range(generations):
         # Spawn colony of ants
         ants_chromosomes = []
@@ -140,12 +152,28 @@ def run_genetic_algorithm(world, pairs, pop_size=20, generations=20, mutation_ra
                 world.pheromones[x][y] = max(1.0, world.pheromones[x][y] * (1.0 - evaporation_rate))
 
         # Deposit pheromones for the best solution of this generation
+        best_gen_paths = []
         if best_gen_chrom is not None and best_gen_cost != float('inf'):
-            # Rebuild roads of the best generation ant to see its paths
-            evaluate_chromosome(best_gen_chrom, world, pairs)
+            # Rebuild roads of the best generation ant to see its paths and extract them
+            _, best_gen_paths = evaluate_chromosome(best_gen_chrom, world, pairs, return_paths=True)
             for x in range(world.x):
                 for y in range(world.y):
                     if world.road_layers[x][y] > 0:
                         world.pheromones[x][y] += Q / best_gen_cost
+                        
+        # store the best chromosome, its generation cost, and its generated path sequences
+        gens_history.append((best_gen_chrom, best_gen_cost, best_gen_paths))
 
     return best_overall_chromosome, best_overall_cost
+
+
+def get_gen(i: int):
+    """Return (chromosome, cost, paths) for generation index `i` (0-based).
+
+    Returns (None, None, None) if index out of range.
+    """
+    if not isinstance(i, int):
+        raise TypeError("generation index must be an integer")
+    if i < 0 or i >= len(gens_history):
+        return None, None, None
+    return gens_history[i]
