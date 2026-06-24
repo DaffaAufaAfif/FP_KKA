@@ -95,7 +95,10 @@ class SimulationUI:
         # --- STATE ANIMASI GENERASI ---
         self.current_anim_gen = 0       
         self.anim_delay_counter = 0     
-        self.is_animating = False       
+        self.is_animating = False  
+        
+        # --- STATE UNTUK ACO REAL-TIME ---
+        self.current_colony = None      
 
     def draw_rounded_panel(self, rect, color, radius=8):
         pygame.draw.rect(self.screen, color, rect, border_radius=radius)
@@ -352,6 +355,13 @@ class SimulationUI:
                 elif self.mode == "SIMULATION":
                     if event.key == pygame.K_SPACE:
                         self.is_running = not self.is_running
+                        # Jika user me-resume kembali setelah pause, kita biarkan. 
+                        # Tapi jika mulai dari gen 0, pastikan koloni bersih.
+                        if self.current_generation >= 20:
+                            self.current_generation = 0
+                            self.current_colony = None
+                            self.world.reset_world()
+                            
                     elif event.key == pygame.K_m:   self.brush_mode = "MACET"
                     elif event.key == pygame.K_h:   self.brush_mode = "HANCUR JALAN"
                     elif event.key == pygame.K_r:
@@ -359,6 +369,7 @@ class SimulationUI:
                         self.world = None
                         self.builder = None
                         self.current_generation = 0
+                        self.current_colony = None  # <--- HAPUS MEMORI KOLONI JUGA DI SINI
                         self.best_cost = 0.0
                         self.is_running = False
                         self.brush_mode = "KOTA"
@@ -388,9 +399,10 @@ class SimulationUI:
                     elif self.mode == "SIMULATION" and self.world:
                         if self.brush_mode == "MACET":
                             self.world.road_layers[grid_x][grid_y] = 5
+                            self.current_colony = None  # <--- RESET POPULASI: Paksa semut cari rute baru!
                         elif self.brush_mode == "HANCUR JALAN":
-                            # Kembalikan ke kondisi medan asli sebelum kena jalan tol
                             self.world.road_layers[grid_x][grid_y] = 0
+                            self.current_colony = None  # <--- RESET POPULASI: Paksa semut memutar arah!
                             
     def update_generation_animation(self):
         """Fungsi ini dipanggil setiap frame untuk memperbarui ubin jalan berdasarkan generasi"""
@@ -434,18 +446,31 @@ class SimulationUI:
             title_surface = self.title_font.render("ACO Road Planner", True, TEXT_WHITE)
             self.screen.blit(title_surface, (self.padding, self.padding))
             
-            # Logika Eksekusi GA saat Simulation Mode aktif
-            # Di dalam main loop run():
+            # Logika Eksekusi GA saat Simulation Mode aktif-
             if self.mode == "SIMULATION" and self.is_running and self.world:
-                daftar_id_kota = list(self.world.node_pos.keys())
-                daftar_rute = list(itertools.combinations(daftar_id_kota, 2))
-                
-                best_order, best_cost = run_genetic_algorithm(self.world, daftar_rute, pop_size=30, generations=20)
-                
-                self.current_anim_gen = 0
-                self.anim_delay_counter = 0
-                self.is_animating = True
-                self.is_running = False  
+                # KUNCI 1: Batasi mutlak hanya sampai generasi 20!
+                if self.current_generation < 20:
+                    daftar_id_kota = list(self.world.node_pos.keys())
+                    daftar_rute = list(itertools.combinations(daftar_id_kota, 2))
+                    
+                    # Jalankan 1 iterasi
+                    best_order, best_cost, next_colony = run_genetic_algorithm(
+                        self.world, daftar_rute, pop_size=30, generations=1, initial_pop=self.current_colony
+                    )
+                    
+                    self.current_colony = next_colony
+                    
+                    if best_order is not None:
+                        evaluate_chromosome(best_order, self.world, daftar_rute)
+                        self.best_cost = best_cost
+                        self.current_generation += 1
+                        
+                        # KUNCI 2: Paksa terminal nge-print secara instan (menghindari tulisan hilang)
+                        print(f"UI Live Tracking -> Gen {self.current_generation:02d}: Cost = {self.best_cost:.2f}", flush=True)
+                else:
+                    # KUNCI 3: Jika sudah menyentuh Gen 20, hentikan otomatis!
+                    self.is_running = False
+                    print("--- Optimisasi Selesai di Generasi 20! ---", flush=True)
                 
             # --- JALANKAN PROSES UPDATE ANIMASI REAL-TIME ---
             self.update_generation_animation()

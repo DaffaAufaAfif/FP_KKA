@@ -89,82 +89,73 @@ def evaluate_chromosome(chromosome: List[int], world, pairs: List[Tuple[int, int
     return total_cost
 
 
-def run_genetic_algorithm(world, pairs, pop_size=20, generations=20, mutation_rate=0.15):
-    """Run Ant Colony Optimization (ACO) to find the optimal road layout.
-    
-    Keeps the function name and signature for compatibility with the UI.
+def run_genetic_algorithm(world, pairs, pop_size=20, generations=1, mutation_rate=0.15, initial_pop=None):
+    """Run Ant Colony Optimization (ACO) step-by-step per frame.
     """
     num_pairs = len(pairs)
     if num_pairs == 0:
-        return None, 0.0
+        return None, 0.0, None
 
-    # Initialize pheromone grid
-    world.pheromones = [[1.0 for _ in range(world.y)] for _ in range(world.x)]
-    
-    best_overall_chromosome = None
-    best_overall_cost = float('inf')
+    # Inisialisasi awal feromon hanya jika belum ada di world
+    if not hasattr(world, 'pheromones'):
+        world.pheromones = [[1.0 for _ in range(world.y)] for _ in range(world.x)]
     
     # ACO Parameters
     evaporation_rate = 0.1
-    Q = 5000.0  # Pheromone deposit factor
+    Q = 5000.0  
 
-    print(f"\n--- Memulai Ant Colony Optimization ({generations} Iterasi) ---")
-    print(f"Total Pasangan Rute: {num_pairs}")
-    print(f"Jumlah Kluster: {len(world.cluster_members)}")
-
-    # reset module-level generation history for this run
-    gens_history.clear()
-    for gen in range(generations):
-        # Spawn colony of ants
+    # --- KUNCI: Gunakan populasi lama dari UI agar optimisasi tidak reset ke Gen 1 ---
+    if initial_pop is not None:
+        ants_chromosomes = initial_pop
+    else:
+        # Reset history hanya saat membuat koloni baru dari nol
+        gens_history.clear()
         ants_chromosomes = []
-        if best_overall_chromosome is not None:
-            # Elitism: keep best solution
-            ants_chromosomes.append(best_overall_chromosome.copy())
-            
         while len(ants_chromosomes) < pop_size:
-            # Each ant explores a different routing order
             chrom = random.sample(range(num_pairs), num_pairs)
             ants_chromosomes.append(chrom)
 
-        # Evaluate each ant's solution
-        cost_scores = []
-        for chrom in ants_chromosomes:
-            cost = evaluate_chromosome(chrom, world, pairs)
-            cost_scores.append(cost)
+    # Evaluate each ant's solution
+    cost_scores = []
+    for chrom in ants_chromosomes:
+        cost = evaluate_chromosome(chrom, world, pairs)
+        cost_scores.append(cost)
 
-        # Find the best ant of this generation
-        best_gen_cost = float('inf')
-        best_gen_chrom = None
-        for i, cost in enumerate(cost_scores):
-            if cost < best_gen_cost:
-                best_gen_cost = cost
-                best_gen_chrom = ants_chromosomes[i]
+    # Find the best ant of this generation
+    best_gen_cost = float('inf')
+    best_gen_chrom = None
+    for i, cost in enumerate(cost_scores):
+        if cost < best_gen_cost:
+            best_gen_cost = cost
+            best_gen_chrom = ants_chromosomes[i]
 
-        if best_gen_cost < best_overall_cost:
-            best_overall_cost = best_gen_cost
-            best_overall_chromosome = best_gen_chrom.copy()
+    # Evaporate pheromones
+    for x in range(world.x):
+        for y in range(world.y):
+            world.pheromones[x][y] = max(1.0, world.pheromones[x][y] * (1.0 - evaporation_rate))
 
-        print(f"  Iterasi {gen + 1:02d}: Total Biaya Jaringan Terbaik = {best_overall_cost:.2f}")
-
-        # Evaporate pheromones
+    # Deposit pheromones
+    best_gen_paths = []
+    if best_gen_chrom is not None and best_gen_cost != float('inf'):
+        _, best_gen_paths = evaluate_chromosome(best_gen_chrom, world, pairs, return_paths=True)
         for x in range(world.x):
             for y in range(world.y):
-                world.pheromones[x][y] = max(1.0, world.pheromones[x][y] * (1.0 - evaporation_rate))
+                if world.road_layers[x][y] > 0:
+                    world.pheromones[x][y] += Q / best_gen_cost
+                    
+    # Catat ke history untuk keperluan tracking
+    gens_history.append((best_gen_chrom, best_gen_cost, best_gen_paths))
 
-        # Deposit pheromones for the best solution of this generation
-        best_gen_paths = []
-        if best_gen_chrom is not None and best_gen_cost != float('inf'):
-            # Rebuild roads of the best generation ant to see its paths and extract them
-            _, best_gen_paths = evaluate_chromosome(best_gen_chrom, world, pairs, return_paths=True)
-            for x in range(world.x):
-                for y in range(world.y):
-                    if world.road_layers[x][y] > 0:
-                        world.pheromones[x][y] += Q / best_gen_cost
-                        
-        # store the best chromosome, its generation cost, and its generated path sequences
-        gens_history.append((best_gen_chrom, best_gen_cost, best_gen_paths))
+    # Evolve/generate koloni baru untuk frame berikutnya
+    next_colony = []
+    # Masukkan yang terbaik (Elitism)
+    if best_gen_chrom is not None:
+        next_colony.append(best_gen_chrom.copy())
+    while len(next_colony) < pop_size:
+        chrom = random.sample(range(num_pairs), num_pairs)
+        next_colony.append(chrom)
 
-    return best_overall_chromosome, best_overall_cost
+    return best_gen_chrom, best_gen_cost, next_colony
 
 
 def get_gen(i: int):
